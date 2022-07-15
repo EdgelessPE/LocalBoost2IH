@@ -196,6 +196,7 @@ NTSTATUS MyCreateFile(
 				isChangeBuffer = 1;*/
 
 #define installing 2
+				_mm_mfence();
 				installMode = installing;
 				*FileHandle = (HANDLE)'LBIH';
 				__debugbreak();
@@ -320,6 +321,8 @@ NTSTATUS MyWriteFile(
 		}
 		__debugbreak();
 
+		_mm_mfence();
+		installMode = FALSE;
 
 		//ExFreePool(pLBconfigFile);
 
