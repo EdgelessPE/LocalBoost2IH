@@ -34,14 +34,16 @@ typedef NTSTATUS(*NtWriteFile_t)(
 
 NtCreateFile_t TrueNtCreateFile;
 NtWriteFile_t TrueNtWriteFile;
-PWCH LBpath = L"\0";
-HANDLE hLBconfigFile;
+//PWCH LBpath = L"\0";
+//HANDLE hLBconfigFile;
 int installMode = TRUE;
 
 struct _LBconfig
 {
 	PWCH source;
 	PWCH dest;
+	ULONG32 sourceLen; //单位: sizeof(WCHAR),不包含\0.
+	ULONG32 destLen;
 } * LBconfig;
 ULONG LBconfigLen;
 
@@ -50,9 +52,13 @@ ULONG LBconfigLen;
 VOID Unload(_In_ PDRIVER_OBJECT DriverObject)
 {
 	IfhRelease();
+
+	ExFreePool(LBconfig[0].source);
+	ExFreePool(LBconfig);
 	return;
 }
 
+/*
 ULONG64 GetFileSize(HANDLE hfile)
 {
 	IO_STATUS_BLOCK iostatus = { 0 };
@@ -67,13 +73,14 @@ ULONG64 GetFileSize(HANDLE hfile)
 		return 0;
 	return fsi.EndOfFile.QuadPart;
 }
+*/
 
 /*
 ObjectName：要替换成的路径 \??\开头
 pObjectNameMDL：赋值NULL
-tmp：替换下来的内存，返回的时候要换回去
+originalName：替换下来的内存，返回的时候要换回去
 */
-NTSTATUS ChangeCreateFileBuffer(PWCHAR* ObjectName, PMDL* pObjectNameMDL, POBJECT_ATTRIBUTES ObjectAttributes, PWCH* tmp)
+NTSTATUS ChangeCreateFileBuffer(PWCHAR* ObjectName, ULONG32 ObjectNameLen, PMDL* pObjectNameMDL, POBJECT_ATTRIBUTES ObjectAttributes, PUNICODE_STRING originalName)
 {
 	PWCHAR r3ObjectName = NULL;
 	//潜在的内存溢出错误（size_t -> ULONG)
@@ -97,10 +104,13 @@ NTSTATUS ChangeCreateFileBuffer(PWCHAR* ObjectName, PMDL* pObjectNameMDL, POBJEC
 		DbgPrint("[-] infinityhook: MmMapLockedPagesSpecifyCache error NULL\n");
 		return STATUS_UNSUCCESSFUL;
 	}
-	*tmp = ObjectAttributes->ObjectName->Buffer;
+	originalName->Buffer = ObjectAttributes->ObjectName->Buffer;
+	originalName->Length = ObjectAttributes->ObjectName->Length;
+	originalName->MaximumLength = ObjectAttributes->ObjectName->MaximumLength;
+
 	ObjectAttributes->ObjectName->Buffer = r3ObjectName;
-	ObjectAttributes->ObjectName->Length = (USHORT)(wcslen(*ObjectName) * sizeof(wchar_t));
-	ObjectAttributes->ObjectName->MaximumLength = (USHORT)(wcslen(*ObjectName) * sizeof(wchar_t) + sizeof(wchar_t));
+	ObjectAttributes->ObjectName->Length = (USHORT)(ObjectNameLen * sizeof(wchar_t));
+	ObjectAttributes->ObjectName->MaximumLength = (USHORT)(ObjectNameLen * sizeof(wchar_t) + sizeof(wchar_t));
 
 	return STATUS_SUCCESS;
 }
@@ -119,7 +129,7 @@ NTSTATUS MyCreateFile(
 	_In_ ULONG EaLength)
 {
 	NTSTATUS s;
-	PWCH tmp = NULL;
+	UNICODE_STRING originalName = { 0 };
 	int isChangeBuffer = 0;
 	PWCHAR ObjectName = NULL;
 	PMDL pObjectNameMDL = NULL;
@@ -198,7 +208,9 @@ NTSTATUS MyCreateFile(
 				_mm_mfence();
 				installMode = installing;
 				*FileHandle = (HANDLE)'LBIH';
-				__debugbreak();
+				//__debugbreak();
+				IoStatusBlock->Status = STATUS_SUCCESS;
+				ExFreePool(ObjectName);
 				return STATUS_SUCCESS;
 			}
 			//if (installMode)
@@ -221,7 +233,7 @@ NTSTATUS MyCreateFile(
 
 						DbgPrint("[+] infinityhook:  %wZ.\n", ObjectAttributes->ObjectName);
 
-						if ((s = ChangeCreateFileBuffer(&(LBconfig[i].dest), &pObjectNameMDL, ObjectAttributes, &tmp)) != STATUS_SUCCESS)
+						if ((s = ChangeCreateFileBuffer(&(LBconfig[i].dest), LBconfig[i].destLen, &pObjectNameMDL, ObjectAttributes, &originalName)) != STATUS_SUCCESS)
 						{
 							return STATUS_UNSUCCESSFUL;
 						}
@@ -242,9 +254,9 @@ NTSTATUS MyCreateFile(
 	s = TrueNtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength);
 	if (isChangeBuffer)
 	{
-		ObjectAttributes->ObjectName->Buffer = tmp;
-		ObjectAttributes->ObjectName->Length = (USHORT)(wcslen(tmp) * sizeof(wchar_t));
-		ObjectAttributes->ObjectName->MaximumLength = (USHORT)(wcslen(tmp) * sizeof(wchar_t) + sizeof(wchar_t));
+		ObjectAttributes->ObjectName->Buffer = originalName.Buffer;
+		ObjectAttributes->ObjectName->Length = originalName.Length;
+		ObjectAttributes->ObjectName->MaximumLength = originalName.MaximumLength;
 		IoFreeMdl(pObjectNameMDL);
 		ExFreePool(ObjectName);
 		//__debugbreak();
@@ -291,7 +303,7 @@ NTSTATUS MyWriteFile(
 			//pLBconfigFileTmp[1] = L'\0';
 			pLBconfigFileTmp += 2;
 		} while (TRUE);
-		__debugbreak();
+		//__debugbreak();
 		LBconfig = ExAllocatePool(NonPagedPool, LBconfigLen * sizeof(struct _LBconfig));
 		if (LBconfig == NULL)
 		{
@@ -312,13 +324,18 @@ NTSTATUS MyWriteFile(
 			pLBconfigFileTmp = wcsstr(destTmp, L"\r\n");
 			if (pLBconfigFileTmp == NULL)
 			{
+				LBconfig[i].sourceLen = (ULONG32)wcslen(LBconfig[i].source);
+				LBconfig[i].destLen = (ULONG32)wcslen(LBconfig[i].dest);
 				break;
 			}
 			pLBconfigFileTmp[0] = L'\0';
 			pLBconfigFileTmp[1] = L'\0';
 			pLBconfigFileTmp += 2;
+
+			LBconfig[i].sourceLen = (ULONG32)wcslen(LBconfig[i].source);
+			LBconfig[i].destLen = (ULONG32)wcslen(LBconfig[i].dest);
 		}
-		__debugbreak();
+		//__debugbreak();
 
 		_mm_mfence();
 		installMode = FALSE;
