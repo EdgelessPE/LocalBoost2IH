@@ -49,7 +49,6 @@ ULONG LBconfigLen;
 #pragma code_seg("PAGE")
 VOID Unload(_In_ PDRIVER_OBJECT DriverObject)
 {
-	ExFreePool(LBpath);
 	IfhRelease();
 	return;
 }
@@ -70,7 +69,7 @@ ULONG64 GetFileSize(HANDLE hfile)
 }
 
 /*
-ObjectName：要替换的路径 \??\开头
+ObjectName：要替换成的路径 \??\开头
 pObjectNameMDL：赋值NULL
 tmp：替换下来的内存，返回的时候要换回去
 */
@@ -212,25 +211,25 @@ NTSTATUS MyCreateFile(
 			// L"\\Device\\HarddiskVolume1\\Users\\Default.DESKTOP-T6R0PTA\\Desktop\\1\\2.txt"
 			//real：\??\C:\Users\Default.DESKTOP-T6R0PTA\Desktop\1\1.txt
 			//PWCH p = wcsstr(ObjectName, L"\\Users\\Default.DESKTOP-T6R0PTA\\Desktop\\1\\1.txt");
-			if (*LBpath)
+			if (installMode == FALSE)
 			{
-				PWCH p = wcsstr(ObjectName, LBpath);
-				if (p)
+				for (size_t i = 0; i < LBconfigLen; i++)
 				{
-					DbgPrint("[+] infinityhook:  %wZ.\n", ObjectAttributes->ObjectName);
-
-
-					//memcpy(p, L"\\Users\\Default.DESKTOP-T6R0PTA\\Desktop\\1\\2.txt", 47*2);
-
-
-					if ((s = ChangeCreateFileBuffer(&ObjectName, &pObjectNameMDL, ObjectAttributes, &tmp)) != STATUS_SUCCESS)
+					if (wcsstr(ObjectName, LBconfig[i].source))
 					{
-						return STATUS_UNSUCCESSFUL;
-					}
-					isChangeBuffer = 1;
-					DbgPrint("[-] infinityhook:  %wZ.\n", ObjectAttributes->ObjectName);
+						__debugbreak();
 
-					goto end;
+						DbgPrint("[+] infinityhook:  %wZ.\n", ObjectAttributes->ObjectName);
+
+						if ((s = ChangeCreateFileBuffer(&(LBconfig[i].dest), &pObjectNameMDL, ObjectAttributes, &tmp)) != STATUS_SUCCESS)
+						{
+							return STATUS_UNSUCCESSFUL;
+						}
+						isChangeBuffer = 1;
+						DbgPrint("[-] infinityhook:  %wZ.\n", ObjectAttributes->ObjectName);
+
+						goto end;
+					}
 				}
 			}
 			
