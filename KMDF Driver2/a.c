@@ -34,8 +34,6 @@ typedef NTSTATUS(*NtWriteFile_t)(
 
 NtCreateFile_t TrueNtCreateFile;
 NtWriteFile_t TrueNtWriteFile;
-//PWCH LBpath = L"\0";
-//HANDLE hLBconfigFile;
 int installMode = TRUE;
 
 struct _LBconfig
@@ -58,22 +56,6 @@ VOID Unload(_In_ PDRIVER_OBJECT DriverObject)
 	return;
 }
 
-/*
-ULONG64 GetFileSize(HANDLE hfile)
-{
-	IO_STATUS_BLOCK iostatus = { 0 };
-	NTSTATUS ntStatus = 0;
-	FILE_STANDARD_INFORMATION fsi = { 0 };
-	ntStatus = ZwQueryInformationFile(hfile,
-		&iostatus,
-		&fsi,
-		sizeof(FILE_STANDARD_INFORMATION),
-		FileStandardInformation);
-	if (!NT_SUCCESS(ntStatus))
-		return 0;
-	return fsi.EndOfFile.QuadPart;
-}
-*/
 
 /*
 ObjectName：要替换成的路径 \??\开头
@@ -144,65 +126,11 @@ NTSTATUS MyCreateFile(
 			memset(ObjectName, 0, ObjectAttributes->ObjectName->Length + sizeof(wchar_t));
 			memcpy(ObjectName, ObjectAttributes->ObjectName->Buffer, ObjectAttributes->ObjectName->Length);
 
-			//安装模式：mkdir C:\lb2ih-install\ 。
-			/*删除这行注释： [路径] 注意mkdir只接受反斜杠，路径开头加\??\*/
-			//文件大小字节数限制DWORD
+			//安装模式：CreateFile C:\lb2ih-install\ 。
 			if (installMode == TRUE && wcsstr(ObjectName, L"C:\\lb2ih-install\\") != NULL /* && wcslen(ObjectName) > 23*/)
 			{
-				/*tmp = (PWCH)(((unsigned char*)ObjectName) + sizeof(L"\\??\\C:\\lb2ih-install\\") - 2);
-				LBpath = (PWCH)ExAllocatePool(NonPagedPool, wcslen(tmp) * sizeof(wchar_t) + sizeof(wchar_t));
-				if (LBpath == NULL)
-				{
-					DbgPrint("LB2IH!LBpath ExAllocatePool NULL\n");
-					return STATUS_MEMORY_NOT_ALLOCATED;
-				}
-				memset(LBpath, 0, wcslen(tmp) * sizeof(wchar_t) + sizeof(wchar_t));
-				memcpy(LBpath, tmp, wcslen(tmp) * sizeof(wchar_t));
-				
-				if ((wcslen(LBpath) < 3) || LBpath[1] != L'-')
-				{
-					DbgPrint("LB2IH!LBpath data error\n");
-					return STATUS_BAD_DATA;
-				}
-				LBpath[1] = L':';
-				*/
-				//改逻辑：给句柄赋个特殊值，直接返回。
+				//给句柄赋个特殊值，直接返回。
 				//开始hook writefile，比对handle，截取写入内容，追加存储到pLBconfigFile，分析内容，转储到LBconfig。
-				/*
-				UNICODE_STRING usLBpath = { 0 };
-				RtlInitUnicodeString(&usLBpath, LBpath);
-				OBJECT_ATTRIBUTES oaLBpath = { 0 };
-				InitializeObjectAttributes(&oaLBpath, &usLBpath, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
-				HANDLE hLBpath = NULL;
-				IO_STATUS_BLOCK isbLBpath = { 0 };
-				s = TrueNtCreateFile(&hLBpath, GENERIC_READ, &oaLBpath, &isbLBpath, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE, NULL, 0);
-				//报错c0000005
-				if (!NT_SUCCESS(s))
-				{
-					DbgPrint("LB2IH!install (open config file) error: return %x, isb %x\n", s, isbLBpath.Status);
-					return s;
-				}
-				ULONG64 LBconfigFileSize = GetFileSize(hLBpath);
-				PUCHAR pLBconfigFile = (PUCHAR)ExAllocatePool(NonPagedPool, LBconfigFileSize + 2 * sizeof(WCHAR));
-				if (pLBconfigFile == NULL)
-				{
-					DbgPrint("LB2IH!pLBconfigFile ExAllocatePool NULL\n");
-					return STATUS_MEMORY_NOT_ALLOCATED;
-				}
-				memset(pLBconfigFile, 0, LBconfigFileSize + 2 * sizeof(WCHAR));
-				s = NtReadFile(hLBpath, NULL, NULL, NULL, &isbLBpath, pLBconfigFile, (ULONG)LBconfigFileSize, NULL, NULL);
-				if (!NT_SUCCESS(s) && s != STATUS_END_OF_FILE)
-				{
-					DbgPrint("LB2IH!install (read config file) error: return %x, isb %x\n", s, isbLBpath.Status);
-					return s;
-				}
-
-
-				if ((s = ChangeCreateFileBuffer(&LBpath, &pObjectNameMDL, ObjectAttributes, &tmp)) != STATUS_SUCCESS)
-				{
-					return STATUS_UNSUCCESSFUL;
-				}
-				isChangeBuffer = 1;*/
 
 #define installing 2
 				_mm_mfence();
@@ -299,8 +227,6 @@ NTSTATUS MyWriteFile(
 			{
 				break;
 			}
-			//pLBconfigFileTmp[0] = L'\0';
-			//pLBconfigFileTmp[1] = L'\0';
 			pLBconfigFileTmp += 2;
 		} while (TRUE);
 		//__debugbreak();
@@ -317,6 +243,11 @@ NTSTATUS MyWriteFile(
 		{
 			LBconfig[i].source = pLBconfigFileTmp;
 			destTmp = wcsstr(pLBconfigFileTmp, L">");
+			if (destTmp == NULL)
+			{
+				DbgPrint("LB2IH!input format error!");
+				return STATUS_UNSUCCESSFUL;
+			}
 			destTmp[0] = L'\0';
 			destTmp += 1;
 			LBconfig[i].dest = destTmp;
@@ -340,8 +271,7 @@ NTSTATUS MyWriteFile(
 		_mm_mfence();
 		installMode = FALSE;
 
-		//ExFreePool(pLBconfigFile);
-
+		IoStatusBlock->Status = STATUS_SUCCESS;
 		return STATUS_SUCCESS;
 	}
 	
